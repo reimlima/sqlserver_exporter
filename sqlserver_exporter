@@ -1,0 +1,79 @@
+#!/bin/env python3.6
+
+"""
+SQL Server Exporter for Prometheus
+
+"""
+from configparser import SafeConfigParser
+import os.path
+import sys
+import re
+import time
+import pyodbc
+from prometheus_client import start_http_server
+from prometheus_client.core import GaugeMetricFamily, REGISTRY
+
+parser = SafeConfigParser()
+
+CONFIG_FILENAME = 'sqlserver_exporter.cfg'
+if os.path.isfile(CONFIG_FILENAME):
+    print('Please check configuration filename provided: ' + CONFIG_FILENAME)
+    sys.exit()
+
+parser.read(CONFIG_FILENAME)
+PORT = int(parser.get('exporter_cfg', 'exporter_port'))
+
+class SQLServerCollector(object):
+
+    """
+    Class required from prometheus_client
+    """
+
+    def collect(self):
+        """
+        Function Required from prometheus_client
+        """
+        sqlserver_user = parser.get('db_login', 'sqlserver_user')
+        sqlserver_password = parser.get('db_login', 'sqlserver_password')
+        dsn = parser.items('db_dsns', 'sqlserver_dsn')
+        dsn_list = dsn[0][1].split(',')
+        for i in range(len(dsn_list)):
+            sqlserver_dsn = dsn_list[i]
+            dsn_connector = 'DSN={};database=master;uid={};pwd={}'.format(sqlserver_dsn,
+                    sqlserver_user,
+                    sqlserver_password)
+            try:
+                conn = pyodbc.connect(dsn_connector)
+            except pyodbc.DatabaseError:
+                print('Database connection error')
+                raise
+
+            cur = conn.cursor()
+            query_dict = dict(parser.items('queries'))
+
+            for key in query_dict:
+                cur.execute(query_dict[key])
+                columns = [i[0].lower() for i in cur.description]
+                for row in cur:
+                    result_dict = dict(zip(columns, row))
+
+                    for result_key in result_dict:
+                        space_key = re.sub('_', ' ', result_key)
+                        result_value = result_dict[result_key]
+                        whole_metric = GaugeMetricFamily(result_key,
+                                space_key,
+                                labels=['database', 'dbtype', 'environment'])
+                        whole_metric.add_metric([sqlserver_dsn,
+                            'sqlserver', 'production'],
+                            result_value)
+
+                        yield whole_metric
+
+            cur.close()
+            conn.close()
+
+if __name__ == '__main__':
+    REGISTRY.register(SQLServerCollector())
+    start_http_server(PORT)
+    while True:
+        time.sleep(60)

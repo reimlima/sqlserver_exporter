@@ -1,0 +1,9 @@
+[Unit]
+Description=SQLServer Exporter
+[Service]
+User=prometheus
+Group=prometheus
+Restart=always
+ExecStart=/usr/sbin/sqlserver_exporter
+[Install]
+WantedBy=default.target
